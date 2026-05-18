@@ -185,38 +185,28 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # USER BUTTONS
     # =====================================================
 
-    elif data == "wallet":
-
+        elif data == "wallet":
         u = db_query(
             "SELECT balance, upi_id FROM users WHERE user_id=?",
             (user_id,),
             fetchone=True
         )
 
-        bal = u[0] if u else 0
-        upi = u[1] if u else "Not Linked"
-
-        kb = [
-            [InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")],
-            [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
-            [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
-        ]
-
         await query.message.edit_text(
-            f"💰 Balance: ₹{bal}\n\nUPI: `{upi}`",
+            f"💳 Balance: ₹{u[0]:.2f}\nUPI: `{u[1] or 'Not Linked'}`",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(kb)
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")],
+                [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+            ])
         )
 
     elif data == "add_upi":
+        context.user_data['state'] = 'WAITING_UPI'
+        await query.message.reply_text("Send your UPI ID:")
 
-        context.user_data["state"] = "WAITING_UPI"
-
-        await query.message.reply_text(
-            "Send your UPI ID:"
-        )
-
-        elif data == "withdraw":
+    elif data == "withdraw":
         wd_status = db_query(
             "SELECT value FROM config WHERE key='withdrawal_status'",
             fetchone=True
@@ -254,7 +244,6 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"💸 Enter withdrawal amount.\n\nAvailable Balance: ₹{balance}"
         )
-
     elif data == "refer_earn":
 
         bot_info = await context.bot.get_me()
