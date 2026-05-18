@@ -25,47 +25,27 @@ logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
 def init_db():
-    conn = sqlite3.connect("/tmp/task_bot.db")
+    conn = sqlite3.connect("/tmp/task_bot.db") # Use /tmp/ for Railway
     cursor = conn.cursor()
-
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+    
+    # Create the users table (you already have this)
+    cursor.execute("""CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
-        balance REAL DEFAULT 0.0,        referred_by INTEGER,
-        upi_id TEXT,
-        is_banned INTEGER DEFAULT 0
-    )''')
+        balance REAL DEFAULT 0.0,
+        referred_by INTEGER,
+        upi_id TEXT
+    )""")
 
-    cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_data TEXT,
-        status TEXT DEFAULT 'available',
-        assigned_to INTEGER,
-        assigned_at TEXT,
-        submission_data TEXT
-    )''')
-
-    cursor.execute('''CREATE TABLE IF NOT EXISTS config (
-        key TEXT PRIMARY KEY,
+    # CREATE THE MISSING TABLE HERE:
+    cursor.execute("""CREATE TABLE IF NOT EXISTS config (
+        parameter TEXT PRIMARY KEY,
         value TEXT
-    )''')
+    )""")
 
-    cursor.execute('''CREATE TABLE IF NOT EXISTS channels (
-        chat_id TEXT PRIMARY KEY,
-        invite_link TEXT
-    )''')
-
-    try:
-        cursor.execute("SELECT chat_id FROM channels LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("DROP TABLE IF EXISTS channels")
-        cursor.execute('''CREATE TABLE channels (chat_id TEXT PRIMARY KEY, invite_link TEXT)''')
-
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('menu_text', 'Welcome to the Task Bot! Complete tasks to earn INR.')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('bot_status', 'ON')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('withdrawal_status', 'ON')")
-    cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('total_wd_processed', '0')")
-
+    # Insert a default status so the bot doesn't crash on Line 124
+    cursor.execute("INSERT OR IGNORE INTO config (parameter, value) VALUES ('bot_status', 'on')")
+    
     conn.commit()
     conn.close()
 
