@@ -25,14 +25,13 @@ logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
 def init_db():
-    conn = sqlite3.connect('task_bot.db')
+    conn = sqlite3.connect("/tmp/task_bot.db")
     cursor = conn.cursor()
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
-        balance REAL DEFAULT 0.0,
-        referred_by INTEGER,
+        balance REAL DEFAULT 0.0,        referred_by INTEGER,
         upi_id TEXT,
         is_banned INTEGER DEFAULT 0
     )''')
