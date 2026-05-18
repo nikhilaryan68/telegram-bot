@@ -14,7 +14,9 @@ from telegram.ext import (
 )
 
 # --- Configuration ---
+import os
 TOKEN = os.getenv("BOT_TOKEN")
+
 ADMIN_IDS = [6197579049]  
 
 # --- Logging Setup ---
