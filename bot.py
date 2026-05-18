@@ -216,42 +216,44 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Send your UPI ID:"
         )
 
-    elif data == "withdraw":
-
-    u = db_query(
-        "SELECT balance, upi_id FROM users WHERE user_id=?",
-        (user_id,),
-        fetchone=True
-    )
-
-    if not u:
-        await query.message.reply_text("❌ User not found.")
-        return
-
-    balance = u[0]
-    upi = u[1]
-
-    if not upi:
-
-        await query.message.reply_text(
-            "❌ Please link UPI ID first."
+        elif data == "withdraw":
+        wd_status = db_query(
+            "SELECT value FROM config WHERE key='withdrawal_status'",
+            fetchone=True
         )
 
-        return
+        if wd_status and wd_status[0] == "OFF":
+            await query.message.reply_text("❌ Withdrawal is currently disabled.")
+            return
 
-    if balance <= 0:
-
-        await query.message.reply_text(
-            "❌ Insufficient balance."
+        u = db_query(
+            "SELECT balance, upi_id FROM users WHERE user_id=?",
+            (user_id,),
+            fetchone=True
         )
 
-        return
+        if not u:
+            await query.message.reply_text("❌ User data not found.")
+            return
 
-    context.user_data["state"] = "WAITING_WD"
+        balance = float(u[0])
+        upi = u[1]
 
-    await query.message.reply_text(
-        f"💸 Enter withdrawal amount.\n\nAvailable Balance: ₹{balance}"
-    )
+        if not upi or upi.strip() == "":
+            await query.message.reply_text(
+                "❌ Please link your UPI ID first from Wallet section."
+            )
+            return
+
+        if balance <= 0:
+            await query.message.reply_text("❌ Insufficient balance.")
+            return
+
+        context.user_data['state'] = 'WAITING_WD_AMOUNT'
+
+        await query.message.reply_text(
+            f"💸 Enter withdrawal amount.\n\nAvailable Balance: ₹{balance}"
+        )
 
     elif data == "refer_earn":
 
