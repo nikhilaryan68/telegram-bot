@@ -116,87 +116,325 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(res_text[0], reply_markup=get_main_menu_keyboard(user_id))
 
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
     user_id = query.from_user.id
     await query.answer()
+
     data = query.data
 
-    # --- ADMIN PANEL ---
-    if data == "admin_panel" and user_id in ADMIN_IDS:
+    # =====================================================
+    # MAIN MENU
+    # =====================================================
+
+    if data == "main_menu":
+
+        res = db_query(
+            "SELECT value FROM config WHERE key='menu_text'",
+            fetchone=True
+        )
+
+        await query.message.edit_text(
+            res[0],
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
+
+    # =====================================================
+    # ADMIN PANEL
+    # =====================================================
+
+    elif data == "admin_panel" and user_id in ADMIN_IDS:
+
         kbd = [
-            [InlineKeyboardButton("📤 Bulk Upload", callback_data="adm_bulk"), InlineKeyboardButton("📋 Tasks Queue", callback_data="adm_pending_tasks")],
-            [InlineKeyboardButton("📥 Task Approvals", callback_data="adm_list_task_app"), InlineKeyboardButton("🏧 WD Requests", callback_data="adm_list_wd")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"), InlineKeyboardButton("💬 DM User", callback_data="adm_dm")],
-            [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban"), InlineKeyboardButton("🔓 Unban User", callback_data="adm_unban")],
-            [InlineKeyboardButton("Toggle WD", callback_data="adm_tog_wd"), InlineKeyboardButton("Toggle Bot", callback_data="adm_tog_bot")],
-            [InlineKeyboardButton("🪙 Check Balance", callback_data="adm_chk_bal"), InlineKeyboardButton("💳 Mod Balance", callback_data="adm_mod_bal")],
-            [InlineKeyboardButton("🏆 Top 10 Bal", callback_data="adm_top_bal"), InlineKeyboardButton("📝 Menu Text", callback_data="adm_chg_text")],
-            [InlineKeyboardButton("📢 Manage Channels", callback_data="adm_manage_channels"), InlineKeyboardButton("🔍 Task Lookup", callback_data="adm_task_status_lookup")],
-            [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats"), InlineKeyboardButton("💾 DB Backup", callback_data="adm_backup")],
+            [InlineKeyboardButton("📤 Bulk Upload", callback_data="adm_bulk"),
+             InlineKeyboardButton("📋 Tasks Queue", callback_data="adm_pending_tasks")],
+
+            [InlineKeyboardButton("📥 Task Approvals", callback_data="adm_list_task_app"),
+             InlineKeyboardButton("🏧 WD Requests", callback_data="adm_list_wd")],
+
+            [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"),
+             InlineKeyboardButton("💬 DM User", callback_data="adm_dm")],
+
+            [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban"),
+             InlineKeyboardButton("🔓 Unban User", callback_data="adm_unban")],
+
+            [InlineKeyboardButton("Toggle WD", callback_data="adm_tog_wd"),
+             InlineKeyboardButton("Toggle Bot", callback_data="adm_tog_bot")],
+
+            [InlineKeyboardButton("🪙 Check Balance", callback_data="adm_chk_bal"),
+             InlineKeyboardButton("💳 Mod Balance", callback_data="adm_mod_bal")],
+
+            [InlineKeyboardButton("🏆 Top 10 Bal", callback_data="adm_top_bal"),
+             InlineKeyboardButton("📝 Menu Text", callback_data="adm_chg_text")],
+
+            [InlineKeyboardButton("📢 Manage Channels", callback_data="adm_manage_channels"),
+             InlineKeyboardButton("🔍 Task Lookup", callback_data="adm_task_status_lookup")],
+
+            [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats"),
+             InlineKeyboardButton("💾 DB Backup", callback_data="adm_backup")],
+
             [InlineKeyboardButton("❌ Close", callback_data="main_menu")]
         ]
-        await query.message.edit_text("⚙️ **Admin Control Panel**", reply_markup=InlineKeyboardMarkup(kbd))
 
-    # Task Approvals Logic
-    elif data == "adm_list_task_app" and user_id in ADMIN_IDS:
-        pending = db_query("SELECT id, assigned_to FROM tasks WHERE status='pending_approval'", fetchall=True)
-        if not pending: await query.message.reply_text("No pending tasks."); return
-        for t in pending:
-            await query.message.reply_text(f"Task ID: {t[0]} | User: {t[1]}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Approve", callback_data=f"adm_app_t_{t[0]}"), InlineKeyboardButton("Reject", callback_data=f"adm_rej_t_{t[0]}")]]))
+        await query.message.edit_text(
+            "⚙️ ADMIN PANEL",
+            reply_markup=InlineKeyboardMarkup(kbd)
+        )
 
-    elif data.startswith(("adm_app_t_", "adm_rej_t_")):
-        p = data.split("_")
-        context.user_data.update({'adm_act_tid': int(p[3]), 'adm_act_type': p[1], 'state': 'ADM_TASK_REM'})
-        await query.message.reply_text("Send remark for this task:")
+    # =====================================================
+    # USER BUTTONS
+    # =====================================================
 
-    # WD Requests Logic
-    elif data == "adm_list_wd" and user_id in ADMIN_IDS:
-        wds = context.bot_data.get('withdrawals', {})
-        if not wds: await query.message.reply_text("No pending WD."); return
-        for wid, val in list(wds.items()):
-            await query.message.reply_text(f"WD: {wid} | User: {val['user_id']} | Amt: ₹{val['amount']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Approve", callback_data=f"adm_app_w_{wid}"), InlineKeyboardButton("Reject", callback_data=f"adm_rej_w_{wid}")]]))
+    elif data == "wallet":
 
-    elif data.startswith(("adm_app_w_", "adm_rej_w_")):
-        p = data.split("_")
-        context.user_data.update({'adm_wd_id': p[3], 'adm_wd_type': p[1], 'state': 'ADM_WD_REM'})
-        await query.message.reply_text("Send remark for withdrawal:")
+        u = db_query(
+            "SELECT balance, upi_id FROM users WHERE user_id=?",
+            (user_id,),
+            fetchone=True
+        )
 
-    # Other Admin Triggers
-    elif data == "adm_dm": context.user_data['state'] = 'ADM_DM_STATE'; await query.message.reply_text("Send `user_id:message`:")
-    elif data == "adm_ban": context.user_data['state'] = 'ADM_BAN_STATE'; await query.message.reply_text("Send user_id to BAN:")
-    elif data == "adm_unban": context.user_data['state'] = 'ADM_UNBAN_STATE'; await query.message.reply_text("Send user_id to UNBAN:")
-    elif data == "adm_chk_bal": context.user_data['state'] = 'ADM_CHK_BAL_STATE'; await query.message.reply_text("Send user_id:")
-    elif data == "adm_mod_bal": context.user_data['state'] = 'ADM_MOD_BAL_STATE'; await query.message.reply_text("Send `user_id:amount` (+/-):")
-    elif data == "adm_task_status_lookup": context.user_data['state'] = 'ADM_TASK_LOOKUP'; await query.message.reply_text("Send Task ID:")
+        bal = u[0] if u else 0
+        upi = u[1] if u else "Not Linked"
 
-    # --- USER ACTIONS ---
+        kb = [
+            [InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")],
+            [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
+            [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+        ]
+
+        await query.message.edit_text(
+            f"💰 Balance: ₹{bal}\n\nUPI: `{upi}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif data == "add_upi":
+
+        context.user_data["state"] = "WAITING_UPI"
+
+        await query.message.reply_text(
+            "Send your UPI ID:"
+        )
+
+    elif data == "withdraw":
+
+        context.user_data["state"] = "WAITING_WD"
+
+        await query.message.reply_text(
+            "Enter withdrawal amount:"
+        )
+
+    elif data == "refer_earn":
+
+        bot_info = await context.bot.get_me()
+
+        link = f"https://t.me/{bot_info.username}?start={user_id}"
+
+        refs = db_query(
+            "SELECT COUNT(*) FROM users WHERE referred_by=?",
+            (user_id,),
+            fetchone=True
+        )[0]
+
+        await query.message.edit_text(
+            f"👥 Referrals: {refs}\n\n🔗 Link:\n`{link}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]
+            ])
+        )
+
+    # =====================================================
+    # GET TASK
+    # =====================================================
+
     elif data == "get_task":
-        # Check if user already has an active task
-        active = db_query("SELECT id FROM tasks WHERE assigned_to = ? AND status IN ('assigned', 'pending_approval')", (user_id,), fetchone=True)
-        if active: await query.message.reply_text("⚠️ Finish your current task first!"); return
-        
-        task = db_query("SELECT id, task_data FROM tasks WHERE status = 'available' LIMIT 1", fetchone=True)
-        if not task: await query.message.reply_text("📭 No tasks available."); return
-        
+
+        active = db_query(
+            "SELECT id FROM tasks WHERE assigned_to=? AND status IN ('assigned','pending_approval')",
+            (user_id,),
+            fetchone=True
+        )
+
+        if active:
+
+            await query.message.reply_text(
+                "⚠️ Complete current task first."
+            )
+
+            return
+
+        task = db_query(
+            "SELECT id, task_data FROM tasks WHERE status='available' LIMIT 1",
+            fetchone=True
+        )
+
+        if not task:
+
+            await query.message.reply_text(
+                "❌ No Tasks Available"
+            )
+
+            return
+
         tid, tdata = task
-        db_query("UPDATE tasks SET status='assigned', assigned_to=?, assigned_at=? WHERE id=?", (user_id, datetime.now().isoformat(), tid), commit=True)
-        await query.message.reply_text(f"📝 **Task Assigned!**\n\nID: `{tid}`\nData: `{tdata}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Submit", callback_data=f"subm_t_{tid}"), InlineKeyboardButton("❌ Cancel", callback_data=f"canc_t_{tid}")]]))
+
+        db_query(
+            "UPDATE tasks SET status='assigned', assigned_to=?, assigned_at=? WHERE id=?",
+            (user_id, datetime.now().isoformat(), tid),
+            commit=True
+        )
+
+        kb = [[
+            InlineKeyboardButton(
+                "✅ Submit",
+                callback_data=f"subm_t_{tid}"
+            ),
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data=f"canc_t_{tid}"
+            )
+        ]]
+
+        await query.message.reply_text(
+            f"📝 TASK ID: {tid}\n\n`{tdata}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
 
     elif data.startswith("subm_t_"):
+
         tid = int(data.split("_")[2])
-        db_query("UPDATE tasks SET status='pending_approval' WHERE id=?", (tid,), commit=True)
-        await query.message.edit_text("⏳ **Submitted for approval.**")
-        for a in ADMIN_IDS: await context.bot.send_message(a, f"New task submission: ID {tid} by user {user_id}")
+
+        db_query(
+            "UPDATE tasks SET status='pending_approval' WHERE id=?",
+            (tid,),
+            commit=True
+        )
+
+        await query.message.edit_text(
+            "✅ Submitted For Approval"
+        )
 
     elif data.startswith("canc_t_"):
-        tid = int(data.split("_")[2])
-        db_query("UPDATE tasks SET status='available', assigned_to=NULL, assigned_at=NULL WHERE id=?", (tid,), commit=True)
-        await query.message.edit_text("❌ Task canceled.")
 
-    # All buttons from previous fix (Refer, Manage Channels, etc.) remain here
-    elif data == "main_menu":
-        res = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)
-        await query.message.edit_text(res[0], reply_markup=get_main_menu_keyboard(user_id))
+        tid = int(data.split("_")[2])
+
+        db_query(
+            "UPDATE tasks SET status='available', assigned_to=NULL, assigned_at=NULL WHERE id=?",
+            (tid,),
+            commit=True
+        )
+
+        await query.message.edit_text(
+            "❌ Task Cancelled"
+        )
+
+    # =====================================================
+    # ADMIN FEATURES
+    # =====================================================
+
+    elif data == "adm_bulk":
+
+        context.user_data["state"] = "ADM_WAITING_BULK"
+
+        await query.message.reply_text(
+            "Send:\nuser:pass,user:pass"
+        )
+
+    elif data == "adm_broadcast":
+
+        context.user_data["state"] = "ADM_BROADCAST"
+
+        await query.message.reply_text(
+            "Send broadcast message:"
+        )
+
+    elif data == "adm_dm":
+
+        context.user_data["state"] = "ADM_DM_STATE"
+
+        await query.message.reply_text(
+            "Send:\nid:message"
+        )
+
+    elif data == "adm_ban":
+
+        context.user_data["state"] = "ADM_BAN_STATE"
+
+        await query.message.reply_text(
+            "Send User ID:"
+        )
+
+    elif data == "adm_unban":
+
+        context.user_data["state"] = "ADM_UNBAN_STATE"
+
+        await query.message.reply_text(
+            "Send User ID:"
+        )
+
+    elif data == "adm_chk_bal":
+
+        context.user_data["state"] = "ADM_CHK_BAL_STATE"
+
+        await query.message.reply_text(
+            "Send User ID:"
+        )
+
+    elif data == "adm_mod_bal":
+
+        context.user_data["state"] = "ADM_MOD_BAL_STATE"
+
+        await query.message.reply_text(
+            "Send:\nid:amount"
+        )
+
+    elif data == "adm_chg_text":
+
+        context.user_data["state"] = "ADM_CHG_TEXT"
+
+        await query.message.reply_text(
+            "Send new menu text:"
+        )
+
+    elif data == "adm_task_status_lookup":
+
+        context.user_data["state"] = "ADM_TASK_LOOKUP"
+
+        await query.message.reply_text(
+            "Send Task ID:"
+        )
+
+    elif data == "adm_manage_channels":
+
+        kb = [
+            [InlineKeyboardButton("➕ Add", callback_data="adm_add_chan"),
+             InlineKeyboardButton("❌ Remove", callback_data="adm_rem_chan")],
+
+            [InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]
+        ]
+
+        await query.message.edit_text(
+            "📢 Manage Channels",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+    elif data == "adm_add_chan":
+
+        context.user_data["state"] = "ADM_ADD_CHAN"
+
+        await query.message.reply_text(
+            "Send:\nchannel_id:invite_link"
+        )
+
+    elif data == "adm_rem_chan":
+
+        context.user_data["state"] = "ADM_REM_CHAN"
+
+        await query.message.reply_text(
+            "Send Channel ID:"
+        )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, text, state = update.effective_user.id, update.message.text.strip(), context.user_data.get('state')
