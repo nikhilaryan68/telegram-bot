@@ -218,11 +218,40 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "withdraw":
 
-        context.user_data["state"] = "WAITING_WD"
+    u = db_query(
+        "SELECT balance, upi_id FROM users WHERE user_id=?",
+        (user_id,),
+        fetchone=True
+    )
+
+    if not u:
+        await query.message.reply_text("❌ User not found.")
+        return
+
+    balance = u[0]
+    upi = u[1]
+
+    if not upi:
 
         await query.message.reply_text(
-            "Enter withdrawal amount:"
+            "❌ Please link UPI ID first."
         )
+
+        return
+
+    if balance <= 0:
+
+        await query.message.reply_text(
+            "❌ Insufficient balance."
+        )
+
+        return
+
+    context.user_data["state"] = "WAITING_WD"
+
+    await query.message.reply_text(
+        f"💸 Enter withdrawal amount.\n\nAvailable Balance: ₹{balance}"
+    )
 
     elif data == "refer_earn":
 
@@ -405,6 +434,212 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             "Send Task ID:"
         )
+    # =========================
+    # TASK QUEUE
+    # =========================
+
+    elif data == "adm_pending_tasks" and user_id in ADMIN_IDS:
+
+        tasks = db_query(
+            "SELECT id, task_data FROM tasks WHERE status='available'",
+            fetchall=True
+        )
+
+        if not tasks:
+
+            await query.message.reply_text(
+                "📭 No pending tasks."
+            )
+
+            return
+
+        msg = "📋 TASK QUEUE\n\n"
+
+        for t in tasks:
+
+            msg += f"ID: {t[0]}\n{t[1]}\n\n"
+
+        await query.message.reply_text(msg)
+
+    # =========================
+    # TASK APPROVALS
+    # =========================
+
+    elif data == "adm_list_task_app" and user_id in ADMIN_IDS:
+
+        tasks = db_query(
+            "SELECT id, assigned_to FROM tasks WHERE status='pending_approval'",
+            fetchall=True
+        )
+
+        if not tasks:
+
+            await query.message.reply_text(
+                "📭 No pending approvals."
+            )
+
+            return
+
+        for t in tasks:
+
+            kb = [[
+
+                InlineKeyboardButton(
+                    "✅ Approve",
+                    callback_data=f"adm_app_t_{t[0]}"
+                ),
+
+                InlineKeyboardButton(
+                    "❌ Reject",
+                    callback_data=f"adm_rej_t_{t[0]}"
+                )
+
+            ]]
+
+            await query.message.reply_text(
+                f"📝 Task ID: {t[0]}\n👤 User: {t[1]}",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+
+    # =========================
+    # WITHDRAWAL REQUESTS
+    # =========================
+
+    elif data == "adm_list_wd" and user_id in ADMIN_IDS:
+
+        wds = context.bot_data.get("withdrawals", {})
+
+        if not wds:
+
+            await query.message.reply_text(
+                "📭 No withdrawal requests."
+            )
+
+            return
+
+        for wid, wd in wds.items():
+
+            kb = [[
+
+                InlineKeyboardButton(
+                    "✅ Approve",
+                    callback_data=f"adm_app_w_{wid}"
+                ),
+
+                InlineKeyboardButton(
+                    "❌ Reject",
+                    callback_data=f"adm_rej_w_{wid}"
+                )
+
+            ]]
+
+            await query.message.reply_text(
+                f"💸 WD ID: {wid}\n👤 User: {wd['user_id']}\n💰 Amount: ₹{wd['amount']}",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+
+    # =========================
+    # TOGGLE WD
+    # =========================
+
+    elif data == "adm_tog_wd" and user_id in ADMIN_IDS:
+
+        cur = db_query(
+            "SELECT value FROM config WHERE key='withdrawal_status'",
+            fetchone=True
+        )[0]
+
+        new = "OFF" if cur == "ON" else "ON"
+
+        db_query(
+            "UPDATE config SET value=? WHERE key='withdrawal_status'",
+            (new,),
+            commit=True
+        )
+
+        await query.message.reply_text(
+            f"✅ Withdrawal Status: {new}"
+        )
+
+    # =========================
+    # TOGGLE BOT
+    # =========================
+
+    elif data == "adm_tog_bot" and user_id in ADMIN_IDS:
+
+        cur = db_query(
+            "SELECT value FROM config WHERE key='bot_status'",
+            fetchone=True
+        )[0]
+
+        new = "OFF" if cur == "ON" else "ON"
+
+        db_query(
+            "UPDATE config SET value=? WHERE key='bot_status'",
+            (new,),
+            commit=True
+        )
+
+        await query.message.reply_text(
+            f"✅ Bot Status: {new}"
+        )
+
+    # =========================
+    # TOP BALANCE
+    # =========================
+
+    elif data == "adm_top_bal" and user_id in ADMIN_IDS:
+
+        top = db_query(
+            "SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10",
+            fetchall=True
+        )
+
+        if not top:
+
+            await query.message.reply_text(
+                "No users."
+            )
+
+            return
+
+        txt = "🏆 TOP 10 BALANCES\n\n"
+
+        for i, row in enumerate(top, start=1):
+
+            txt += f"{i}. {row[0]} → ₹{row[1]}\n"
+
+        await query.message.reply_text(txt)
+
+    # =========================
+    # BOT STATS
+    # =========================
+
+    elif data == "adm_stats" and user_id in ADMIN_IDS:
+
+        total_users = db_query(
+            "SELECT COUNT(*) FROM users",
+            fetchone=True
+        )[0]
+
+        total_tasks = db_query(
+            "SELECT COUNT(*) FROM tasks WHERE status='completed'",
+            fetchone=True
+        )[0]
+
+        total_wd = db_query(
+            "SELECT value FROM config WHERE key='total_wd_processed'",
+            fetchone=True
+        )[0]
+
+        txt = (
+            f"📊 BOT STATS\n\n"
+            f"👥 Users: {total_users}\n"
+            f"✅ Completed Tasks: {total_tasks}\n"
+            f"💸 Withdrawals: ₹{total_wd}"
+        )
+
+        await query.message.reply_text(txt)
 
     elif data == "adm_manage_channels":
 
@@ -483,6 +718,82 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_query("UPDATE users SET balance=balance+? WHERE user_id=?", (float(amt), int(target)), commit=True); await update.message.reply_text("Updated.")
 
     # Standard states (UPI, WD, etc.)
+    elif state == 'WAITING_WD':
+
+    try:
+        amt = float(text)
+
+    except:
+
+        await update.message.reply_text(
+            "❌ Invalid amount."
+        )
+
+        return
+
+    u = db_query(
+        "SELECT balance, upi_id FROM users WHERE user_id=?",
+        (user_id,),
+        fetchone=True
+    )
+
+    if not u:
+
+        return
+
+    balance = u[0]
+    upi = u[1]
+
+    if amt <= 0 or amt > balance:
+
+        await update.message.reply_text(
+            "❌ Invalid amount."
+        )
+
+        return
+
+    if "withdrawals" not in context.bot_data:
+        context.bot_data["withdrawals"] = {}
+
+    wid = str(int(datetime.now().timestamp()))
+
+    context.bot_data["withdrawals"][wid] = {
+        "user_id": user_id,
+        "amount": amt,
+        "upi": upi
+    }
+
+    await update.message.reply_text(
+        "✅ Withdrawal request submitted."
+    )
+
+    for admin in ADMIN_IDS:
+
+        try:
+
+            kb = [[
+
+                InlineKeyboardButton(
+                    "✅ Approve",
+                    callback_data=f"adm_app_w_{wid}"
+                ),
+
+                InlineKeyboardButton(
+                    "❌ Reject",
+                    callback_data=f"adm_rej_w_{wid}"
+                )
+
+            ]]
+
+            await context.bot.send_message(
+                admin,
+                f"💸 New Withdrawal Request\n\n👤 User: {user_id}\n💰 Amount: ₹{amt}\n🏦 UPI: {upi}",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+
+        except:
+            pass
+            
     elif state == 'WAITING_UPI':
         db_query("UPDATE users SET upi_id=? WHERE user_id=?", (text, user_id), commit=True); await update.message.reply_text("UPI Linked.")
 
