@@ -1,8 +1,16 @@
 import logging
 import sqlite3
 import asyncio
+import os
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, 
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    WebAppInfo, 
+    ReplyKeyboardMarkup, 
+    KeyboardButton
+)
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
@@ -13,17 +21,17 @@ from telegram.ext import (
     filters,
 )
 
-import os
-
 # --- Configuration ---
 TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No BOT_TOKEN provided in environment variables!")
 
+# Set your WebApp URL here (from Railway)
+WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://your-project-name.up.railway.app/')
+
 # Read ADMIN_IDS from env string (e.g., "6197579049,12345678") and parse into integers
 admin_ids_raw = os.getenv('ADMIN_IDS', '6197579049')
 ADMIN_IDS = [int(x.strip()) for x in admin_ids_raw.split(',') if x.strip().isdigit()]
-
 
 # --- Logging Setup ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -40,8 +48,15 @@ def init_db():
         balance REAL DEFAULT 0.0,
         referred_by INTEGER,
         upi_id TEXT,
-        is_banned INTEGER DEFAULT 0
+        is_banned INTEGER DEFAULT 0,
+        device_verified INTEGER DEFAULT 0
     )''')
+    
+    # Safely add device_verified if updating an old database
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN device_verified INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass # Column already exists
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,22 +116,40 @@ async def check_user_joined_channels(bot, user_id):
         except: return False
     return True
 
+# --- NEW: Formatted Channel & WebApp Keyboards ---
 def get_channel_verification_keyboard():
     channels = db_query("SELECT invite_link FROM channels", fetchall=True)
-    keyboard = [[InlineKeyboardButton(f"📢 Join Channel {i+1}", url=row[0])] for i, row in enumerate(channels)]
-    keyboard.append([InlineKeyboardButton("🔄 Try Again / Verify", callback_data="check_membership")])
+    keyboard = []
+    row = []
+    # Places 2 buttons per row (Medium size layout)
+    for i, row_data in enumerate(channels):
+        row.append(InlineKeyboardButton(f"Join Channel {i+1}", url=row_data[0]))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append([InlineKeyboardButton("Verify Channels", callback_data="check_membership")])
     return InlineKeyboardMarkup(keyboard)
 
-def get_main_menu_keyboard(user_id):
-    admin_contact_url = f"tg://user?id={ADMIN_IDS[0]}"
+def get_webapp_verify_keyboard():
     keyboard = [
-        [InlineKeyboardButton("📝 Get Task", callback_data="get_task")],
-        [InlineKeyboardButton("💰 Wallet", callback_data="wallet"), InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
-        [InlineKeyboardButton("👥 Refer & Earn", callback_data="refer_earn"), InlineKeyboardButton("📞 Support", url=admin_contact_url)]
+        [InlineKeyboardButton("Verify Your Device", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [InlineKeyboardButton("Refresh Status", callback_data="check_device_verify")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# --- NEW: Main Menu is now a Reply Keyboard (Bottom of screen) ---
+def get_main_menu_keyboard(user_id):
+    keyboard = [
+        [KeyboardButton("📝 Get Task")],
+        [KeyboardButton("💰 Wallet"), KeyboardButton("💸 Withdraw")],
+        [KeyboardButton("👥 Refer & Earn"), KeyboardButton("📞 Support")]
     ]
     if user_id in ADMIN_IDS:
-        keyboard.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(keyboard)
+        keyboard.append([KeyboardButton("⚙️ Admin Panel")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def task_timeout_monitor(context: ContextTypes.DEFAULT_TYPE):
     cutoff = (datetime.now() - timedelta(minutes=30)).isoformat()
@@ -128,20 +161,41 @@ async def task_timeout_monitor(context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, username = update.effective_user.id, update.effective_user.username or "Unknown"
+    
     bot_status = db_query("SELECT value FROM config WHERE key='bot_status'", fetchone=True)[0]
     if bot_status == 'OFF' and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Maintenance mode.")
         return
-    user = db_query("SELECT is_banned FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+        
+    user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+    
+    # 1. Block immediately if banned via webapp or admin
     if user and user[0] == 1:
-        await update.message.reply_text("❌ Banned.")
+        await update.message.reply_text("❌ Access Denied.")
         return
+        
     if not user:
         ref_id = int(context.args[0]) if context.args and context.args[0].isdigit() and int(context.args[0]) != user_id else None
-        db_query("INSERT INTO users (user_id, username, referred_by) VALUES (?, ?, ?)", (user_id, username, ref_id), commit=True)
+        db_query("INSERT INTO users (user_id, username, referred_by, device_verified) VALUES (?, ?, ?, 0)", (user_id, username, ref_id), commit=True)
+        device_verified = 0
+    else:
+        device_verified = user[1]
+
+    # 2. Force Channel Join First
     if not await check_user_joined_channels(context.bot, user_id) and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Join channels first:", reply_markup=get_channel_verification_keyboard())
         return
+
+    # 3. Force Device WebApp Verification Second
+    if not device_verified and user_id not in ADMIN_IDS:
+        await update.message.reply_text(
+            "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.", 
+            parse_mode="Markdown", 
+            reply_markup=get_webapp_verify_keyboard()
+        )
+        return
+
+    # 4. All verified, show Main Menu
     menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
     await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
 
@@ -150,6 +204,36 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
     data = query.data
+
+    # --- NEW: DEVICE VERIFICATION & BAN LOGIC ---
+    if data == "check_device_verify":
+        user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+        if user and user[0] == 1:
+            await query.message.edit_text("❌ Access Denied. Your account has been autobanned for security violations.")
+            return
+        if user and user[1] == 1:
+            menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
+            await query.message.delete()
+            await context.bot.send_message(chat_id=user_id, text="✅ Device Successfully Verified!\n\n" + menu_text, reply_markup=get_main_menu_keyboard(user_id))
+        else:
+            await query.answer("⚠️ Not verified yet. Please open the WebApp and complete verification.", show_alert=True)
+        return
+
+    # --- UPDATED: CHANNEL VERIFICATION LOGIC ---
+    if data == "check_membership":
+        if await check_user_joined_channels(context.bot, user_id):
+            user = db_query("SELECT device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+            device_verified = user[0] if user else 0
+            
+            if not device_verified and user_id not in ADMIN_IDS:
+                await query.message.edit_text("✅ Channels Joined!\n\n🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete the device security check.", parse_mode="Markdown", reply_markup=get_webapp_verify_keyboard())
+            else:
+                menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
+                await query.message.delete()
+                await context.bot.send_message(chat_id=user_id, text="✅ All Verifications Complete!\n\n" + menu_text, reply_markup=get_main_menu_keyboard(user_id))
+        else: 
+            await query.message.edit_text("❌ Join all channels.", reply_markup=get_channel_verification_keyboard())
+        return
 
     if data == "admin_panel" and user_id in ADMIN_IDS:
         kbd = [
@@ -176,15 +260,11 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if await check_user_joined_channels(context.bot, u[0]): verified_u += 1
         stats_msg = f"Total users in bot :- \"{total_u}\"\n\nTotal verified users :- \"{verified_u}\"\n\nTotal withdrawal:- \"₹{total_wd}\"\n\nTotal tasks completed:- \"{total_t}\""
         await query.message.reply_text(stats_msg)
-
-    elif data == "check_membership":
-        if await check_user_joined_channels(context.bot, user_id):
-            await query.message.reply_text("✅ Verified!", reply_markup=get_main_menu_keyboard(user_id))
-        else: await query.message.reply_text("❌ Join all channels.", reply_markup=get_channel_verification_keyboard())
     
     elif data == "main_menu":
         menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
-        await query.message.edit_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
+        await query.message.delete() # Cleans up the old inline message
+        await context.bot.send_message(chat_id=user_id, text=menu_text, reply_markup=get_main_menu_keyboard(user_id))
     
     elif data == "get_task":
         active = db_query("SELECT id FROM tasks WHERE assigned_to = ? AND status IN ('assigned', 'pending_approval')", (user_id,), fetchone=True)
@@ -221,6 +301,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "wallet":
         u = db_query("SELECT balance, upi_id FROM users WHERE user_id=?", (user_id,), fetchone=True)
+        # Note: Added 'withdraw' button callback here in case they press it via Wallet inline menu
         await query.message.edit_text(f"💳 Balance: ₹{u[0]:.2f}\nUPI: `{u[1] or 'None'}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")], [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")], [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]]))
     
     elif data == "add_upi": context.user_data['state'] = 'WAITING_UPI'; await query.message.reply_text("Send UPI:")
@@ -295,7 +376,67 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "adm_rem_chan": context.user_data['state'] = 'ADM_REM_CHAN_DATA'; await query.message.reply_text("id to rem")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id, text, state = update.effective_user.id, update.message.text.strip(), context.user_data.get('state')
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    state = context.user_data.get('state')
+
+    # --- NEW: Catch Reply Keyboard Button Presses First ---
+    if text == "📝 Get Task":
+        active = db_query("SELECT id FROM tasks WHERE assigned_to = ? AND status IN ('assigned', 'pending_approval')", (user_id,), fetchone=True)
+        if active: await update.message.reply_text("⚠️ Finish active task first."); return
+        task = db_query("SELECT id, task_data FROM tasks WHERE status = 'available' LIMIT 1", fetchone=True)
+        if not task: await update.message.reply_text("📭 No tasks."); return
+        
+        tid, tdata = task
+        try: t_user, t_pass = tdata.split(":")
+        except: await update.message.reply_text("⚠️ Task Error."); return
+        
+        db_query("UPDATE tasks SET status = 'assigned', assigned_to = ?, assigned_at = ? WHERE id = ?", (user_id, datetime.now().isoformat(), tid), commit=True)
+        msg = f"TASK ID :- \"{tid}\"\n\nUSERNAME :- `{t_user}`\n\nPASSWORD :- `{t_pass}`\n\nTASK TIMEOUT IN 30MINS."
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Submit", callback_data=f"subm_t_{tid}"), InlineKeyboardButton("❌ Cancel", callback_data=f"canc_t_{tid}")]]))
+        return
+
+    elif text == "💰 Wallet":
+        u = db_query("SELECT balance, upi_id FROM users WHERE user_id=?", (user_id,), fetchone=True)
+        await update.message.reply_text(f"💳 Balance: ₹{u[0]:.2f}\nUPI: `{u[1] or 'None'}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")], [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")]]))
+        return
+
+    elif text == "💸 Withdraw":
+        wd_s = db_query("SELECT value FROM config WHERE key='withdrawal_status'", fetchone=True)[0]
+        u = db_query("SELECT balance, upi_id FROM users WHERE user_id=?", (user_id,), fetchone=True)
+        if wd_s == 'OFF': await update.message.reply_text("⚠️ WD OFF"); return
+        if not u[1]: await update.message.reply_text("❌ Link UPI first"); return
+        context.user_data['state'] = 'WAITING_WD_AMOUNT'; await update.message.reply_text(f"Amt (Max ₹{u[0]}):")
+        return
+
+    elif text == "👥 Refer & Earn":
+        bot_me = await context.bot.get_me()
+        c = db_query("SELECT COUNT(*) FROM users WHERE referred_by=?", (user_id,), fetchone=True)[0]
+        await update.message.reply_text(f"👥 Referrals: {c}\nLink: `t.me/{bot_me.username}?start={user_id}`", parse_mode="Markdown")
+        return
+
+    elif text == "📞 Support":
+        admin_contact_url = f"tg://user?id={ADMIN_IDS[0]}"
+        await update.message.reply_text(f"📞 Contact Support: {admin_contact_url}")
+        return
+
+    elif text == "⚙️ Admin Panel" and user_id in ADMIN_IDS:
+        kbd = [
+            [InlineKeyboardButton("📤 Bulk Upload", callback_data="adm_bulk"), InlineKeyboardButton("📋 Tasks Queue", callback_data="adm_pending_tasks")],
+            [InlineKeyboardButton("📥 Task Approvals", callback_data="adm_list_task_app"), InlineKeyboardButton("🏧 WD Requests", callback_data="adm_list_wd")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"), InlineKeyboardButton("💬 DM User", callback_data="adm_dm")],
+            [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban"), InlineKeyboardButton("🔓 Unban User", callback_data="adm_unban")],
+            [InlineKeyboardButton("Toggle WD", callback_data="adm_tog_wd"), InlineKeyboardButton("Toggle Bot", callback_data="adm_tog_bot")],
+            [InlineKeyboardButton("🪙 Check Balance", callback_data="adm_chk_bal"), InlineKeyboardButton("💳 Mod Balance", callback_data="adm_mod_bal")],
+            [InlineKeyboardButton("🏆 Top 10 Bal", callback_data="adm_top_bal"), InlineKeyboardButton("📝 Menu Text", callback_data="adm_chg_text")],
+            [InlineKeyboardButton("📢 Manage Channels", callback_data="adm_manage_channels"), InlineKeyboardButton("🔍 Task Lookup", callback_data="adm_task_status_lookup")],
+            [InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats")],
+            [InlineKeyboardButton("❌ Close", callback_data="main_menu")]
+        ]
+        await update.message.reply_text("⚙️ **Admin Panel**", reply_markup=InlineKeyboardMarkup(kbd))
+        return
+
+    # --- Continue to Original State Logic Below ---
     if not state: return
     context.user_data['state'] = None
 
