@@ -27,7 +27,7 @@ if not TOKEN:
     raise ValueError("No BOT_TOKEN provided in environment variables!")
 
 # Set your WebApp URL here (from Railway)
-WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://your-project-name.up.railway.app/')
+WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://mini-apo-production.up.railway.app/')
 
 # Read ADMIN_IDS from env string (e.g., "6197579049,12345678") and parse into integers
 admin_ids_raw = os.getenv('ADMIN_IDS', '6197579049')
