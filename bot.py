@@ -40,25 +40,16 @@ def init_db():
     conn = sqlite3.connect('task_bot.db')
     cursor = conn.cursor()
     
-    # Add device_token column if it doesn't exist
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN device_token TEXT")
-    except sqlite3.OperationalError:
-        pass (
-        
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         balance REAL DEFAULT 0.0,
         referred_by INTEGER,
         upi_id TEXT,
         is_banned INTEGER DEFAULT 0,
-        device_verified INTEGER DEFAULT 0
+        device_verified INTEGER DEFAULT 0,
+        device_token TEXT
     )''')
-    
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN device_verified INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass 
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,12 +70,6 @@ def init_db():
         invite_link TEXT
     )''')
 
-    try:
-        cursor.execute("SELECT chat_id FROM channels LIMIT 1")
-    except sqlite3.OperationalError:
-        cursor.execute("DROP TABLE IF EXISTS channels")
-        cursor.execute('''CREATE TABLE channels (chat_id TEXT PRIMARY KEY, invite_link TEXT)''')
-    
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('menu_text', 'Welcome to the Task Bot! Complete tasks to earn INR.')")
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('bot_status', 'ON')")
     cursor.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('withdrawal_status', 'ON')")
