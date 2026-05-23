@@ -26,7 +26,7 @@ TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No BOT_TOKEN provided in environment variables!")
 
-WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://PASTE-YOUR-REAL-RAILWAY-LINK-HERE.up.railway.app/')
+WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://mini-apo-production.up.railway.app/')
 
 admin_ids_raw = os.getenv('ADMIN_IDS', '6197579049')
 ADMIN_IDS = [int(x.strip()) for x in admin_ids_raw.split(',') if x.strip().isdigit()]
