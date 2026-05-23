@@ -40,7 +40,12 @@ def init_db():
     conn = sqlite3.connect('task_bot.db')
     cursor = conn.cursor()
     
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+    # Add device_token column if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN device_token TEXT")
+    except sqlite3.OperationalError:
+        pass (
+        
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         balance REAL DEFAULT 0.0,
@@ -156,17 +161,21 @@ async def task_timeout_monitor(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, username = update.effective_user.id, update.effective_user.username or "Unknown"
     
+    # 1. Maintenance Mode Check (Always first)
     bot_status = db_query("SELECT value FROM config WHERE key='bot_status'", fetchone=True)[0]
     if bot_status == 'OFF' and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Maintenance mode.")
         return
-        
+
+    # 2. Database check for user state
     user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
     
+    # 3. Check for ban
     if user and user[0] == 1:
         await update.message.reply_text("❌ Access Denied.")
         return
         
+    # 4. If user not in DB, add them
     if not user:
         ref_id = int(context.args[0]) if context.args and context.args[0].isdigit() and int(context.args[0]) != user_id else None
         db_query("INSERT INTO users (user_id, username, referred_by, device_verified) VALUES (?, ?, ?, 0)", (user_id, username, ref_id), commit=True)
@@ -174,20 +183,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         device_verified = user[1]
 
+    # 5. Check if verified in DB (Skip sequence if already verified)
+    if device_verified == 1:
+        menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
+        await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
+        return
+
+    # 6. Force Channel Join
     if not await check_user_joined_channels(context.bot, user_id) and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Join channels first:", reply_markup=get_channel_verification_keyboard())
         return
 
-    if not device_verified and user_id not in ADMIN_IDS:
-        await update.message.reply_text(
-            "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.", 
-            parse_mode="Markdown", 
-            reply_markup=get_webapp_verify_keyboard()
-        )
-        return
-
-    menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
-    await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
+    # 7. Force Device Verification
+    await update.message.reply_text(
+        "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.", 
+        parse_mode="Markdown", 
+        reply_markup=get_webapp_verify_keyboard()
 
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
