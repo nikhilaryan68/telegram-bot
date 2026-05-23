@@ -181,7 +181,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 7. Force Device Verification
     await update.message.reply_text(
-        "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.", 
+        "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.",)
         parse_mode="Markdown", 
         reply_markup=get_webapp_verify_keyboard()
 
