@@ -26,10 +26,8 @@ TOKEN = os.getenv('BOT_TOKEN')
 if not TOKEN:
     raise ValueError("No BOT_TOKEN provided in environment variables!")
 
-# Set your WebApp URL here (from Railway)
-WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://mini-apo-production.up.railway.app/')
+WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://PASTE-YOUR-REAL-RAILWAY-LINK-HERE.up.railway.app/')
 
-# Read ADMIN_IDS from env string (e.g., "6197579049,12345678") and parse into integers
 admin_ids_raw = os.getenv('ADMIN_IDS', '6197579049')
 ADMIN_IDS = [int(x.strip()) for x in admin_ids_raw.split(',') if x.strip().isdigit()]
 
@@ -52,11 +50,10 @@ def init_db():
         device_verified INTEGER DEFAULT 0
     )''')
     
-    # Safely add device_verified if updating an old database
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN device_verified INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
-        pass # Column already exists
+        pass 
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,12 +113,10 @@ async def check_user_joined_channels(bot, user_id):
         except: return False
     return True
 
-# --- NEW: Formatted Channel & WebApp Keyboards ---
 def get_channel_verification_keyboard():
     channels = db_query("SELECT invite_link FROM channels", fetchall=True)
     keyboard = []
     row = []
-    # Places 2 buttons per row (Medium size layout)
     for i, row_data in enumerate(channels):
         row.append(InlineKeyboardButton(f"Join Channel {i+1}", url=row_data[0]))
         if len(row) == 2:
@@ -134,13 +129,12 @@ def get_channel_verification_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_webapp_verify_keyboard():
+    # Only the verify button remains.
     keyboard = [
-        [InlineKeyboardButton("Verify Your Device", web_app=WebAppInfo(url=WEBAPP_URL))],
-        [InlineKeyboardButton("Refresh Status", callback_data="check_device_verify")]
+        [InlineKeyboardButton("Verify Your Device", web_app=WebAppInfo(url=WEBAPP_URL))]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --- NEW: Main Menu is now a Reply Keyboard (Bottom of screen) ---
 def get_main_menu_keyboard(user_id):
     keyboard = [
         [KeyboardButton("📝 Get Task")],
@@ -169,7 +163,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
     
-    # 1. Block immediately if banned via webapp or admin
     if user and user[0] == 1:
         await update.message.reply_text("❌ Access Denied.")
         return
@@ -181,12 +174,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         device_verified = user[1]
 
-    # 2. Force Channel Join First
     if not await check_user_joined_channels(context.bot, user_id) and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Join channels first:", reply_markup=get_channel_verification_keyboard())
         return
 
-    # 3. Force Device WebApp Verification Second
     if not device_verified and user_id not in ADMIN_IDS:
         await update.message.reply_text(
             "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.", 
@@ -195,7 +186,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 4. All verified, show Main Menu
     menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
     await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
 
@@ -205,21 +195,6 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # --- NEW: DEVICE VERIFICATION & BAN LOGIC ---
-    if data == "check_device_verify":
-        user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
-        if user and user[0] == 1:
-            await query.message.edit_text("❌ Access Denied. Your account has been autobanned for security violations.")
-            return
-        if user and user[1] == 1:
-            menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
-            await query.message.delete()
-            await context.bot.send_message(chat_id=user_id, text="✅ Device Successfully Verified!\n\n" + menu_text, reply_markup=get_main_menu_keyboard(user_id))
-        else:
-            await query.answer("⚠️ Not verified yet. Please open the WebApp and complete verification.", show_alert=True)
-        return
-
-    # --- UPDATED: CHANNEL VERIFICATION LOGIC ---
     if data == "check_membership":
         if await check_user_joined_channels(context.bot, user_id):
             user = db_query("SELECT device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
@@ -263,7 +238,7 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "main_menu":
         menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
-        await query.message.delete() # Cleans up the old inline message
+        await query.message.delete()
         await context.bot.send_message(chat_id=user_id, text=menu_text, reply_markup=get_main_menu_keyboard(user_id))
     
     elif data == "get_task":
@@ -301,7 +276,6 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "wallet":
         u = db_query("SELECT balance, upi_id FROM users WHERE user_id=?", (user_id,), fetchone=True)
-        # Note: Added 'withdraw' button callback here in case they press it via Wallet inline menu
         await query.message.edit_text(f"💳 Balance: ₹{u[0]:.2f}\nUPI: `{u[1] or 'None'}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Link UPI", callback_data="add_upi")], [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")], [InlineKeyboardButton("⬅️ Back", callback_data="main_menu")]]))
     
     elif data == "add_upi": context.user_data['state'] = 'WAITING_UPI'; await query.message.reply_text("Send UPI:")
@@ -380,7 +354,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     state = context.user_data.get('state')
 
-    # --- NEW: Catch Reply Keyboard Button Presses First ---
     if text == "📝 Get Task":
         active = db_query("SELECT id FROM tasks WHERE assigned_to = ? AND status IN ('assigned', 'pending_approval')", (user_id,), fetchone=True)
         if active: await update.message.reply_text("⚠️ Finish active task first."); return
@@ -436,7 +409,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚙️ **Admin Panel**", reply_markup=InlineKeyboardMarkup(kbd))
         return
 
-    # --- Continue to Original State Logic Below ---
     if not state: return
     context.user_data['state'] = None
 
