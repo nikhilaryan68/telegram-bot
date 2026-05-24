@@ -130,7 +130,6 @@ def get_channel_verification_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_webapp_verify_keyboard():
-    # Only the verify button remains.
     keyboard = [
         [InlineKeyboardButton("Verify Your Device", web_app=WebAppInfo(url=WEBAPP_URL))]
     ]
@@ -157,29 +156,18 @@ async def task_timeout_monitor(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id, username = update.effective_user.id, update.effective_user.username or "Unknown"
 
-    # 1. Maintenance Mode Check (Always first)
-    bot_status = db_query(
-        "SELECT value FROM config WHERE key='bot_status'",
-        fetchone=True
-    )[0]
+    bot_status = db_query("SELECT value FROM config WHERE key='bot_status'", fetchone=True)[0]
 
     if bot_status == 'OFF' and user_id not in ADMIN_IDS:
         await update.message.reply_text("⚠️ Maintenance mode.")
         return
 
-    # 2. Database check for user state
-    user = db_query(
-        "SELECT is_banned, device_verified FROM users WHERE user_id = ?",
-        (user_id,),
-        fetchone=True
-    )
+    user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
 
-    # 3. Check for ban
     if user and user[0] == 1:
         await update.message.reply_text("❌ Access Denied.")
         return
 
-    # 4. If user not in DB, add them
     if not user:
         ref_id = (
             int(context.args[0])
@@ -194,34 +182,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id, username, ref_id),
             commit=True
         )
-
         device_verified = 0
-
     else:
         device_verified = user[1]
 
-    # 5. Check if verified in DB
     if device_verified == 1:
-        menu_text = db_query(
-            "SELECT value FROM config WHERE key='menu_text'",
-            fetchone=True
-        )[0]
-
-        await update.message.reply_text(
-            menu_text,
-            reply_markup=get_main_menu_keyboard(user_id)
-        )
+        menu_text = db_query("SELECT value FROM config WHERE key='menu_text'", fetchone=True)[0]
+        await update.message.reply_text(menu_text, reply_markup=get_main_menu_keyboard(user_id))
         return
 
-    # 6. Force Channel Join
     if not await check_user_joined_channels(context.bot, user_id) and user_id not in ADMIN_IDS:
-        await update.message.reply_text(
-            "⚠️ Join channels first:",
-            reply_markup=get_channel_verification_keyboard()
-        )
+        await update.message.reply_text("⚠️ Join channels first:", reply_markup=get_channel_verification_keyboard())
         return
 
-    # 7. Force Device Verification
     await update.message.reply_text(
         "🔒 *Verify Yourself To Start Bot*\n\nPlease click the button below to complete a quick device security check.",
         parse_mode="Markdown",
@@ -392,6 +365,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
     state = context.user_data.get('state')
+
+    # Security check to prevent bypass
+    user = db_query("SELECT is_banned, device_verified FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+    if not user:
+        await update.message.reply_text("⚠️ Please send /start first.")
+        return
+    if user[0] == 1:
+        return
+    if user[1] == 0 and user_id not in ADMIN_IDS:
+        await update.message.reply_text("🔒 Please verify your device using /start first.")
+        return
+    if not await check_user_joined_channels(context.bot, user_id) and user_id not in ADMIN_IDS:
+        await update.message.reply_text("⚠️ Join channels first.")
+        return
 
     if text == "📝 Get Task":
         active = db_query("SELECT id FROM tasks WHERE assigned_to = ? AND status IN ('assigned', 'pending_approval')", (user_id,), fetchone=True)
