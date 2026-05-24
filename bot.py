@@ -362,6 +362,12 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "adm_rem_chan": context.user_data['state'] = 'ADM_REM_CHAN_DATA'; await query.message.reply_text("id to rem")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Safety checks to prevent NoneType errors from channel posts or service messages
+    if not update.effective_user:
+        return
+    if not update.message or not update.message.text:
+        return
+
     user_id = update.effective_user.id
     text = update.message.text.strip()
     state = context.user_data.get('state')
